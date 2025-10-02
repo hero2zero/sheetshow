@@ -3,6 +3,8 @@
 SheetShow - Search and Export Excel/Text Files
 A Python script that searches for a given search term across Excel and text files
 and provides the option to save the results to a new spreadsheet/workbook.
+
+Version: 1.1
 """
 
 import os
@@ -13,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+from tqdm import tqdm
 
 
 class SearchResults:
@@ -20,16 +23,18 @@ class SearchResults:
 
     def __init__(self):
         self.results = []
-        self.search_term = ""
+        self.search_terms = []
         self.search_location = ""
 
-    def add_result(self, file_path: str, line_number: int, line_content: str, sheet_name: str = None, column_name: str = None, full_row_data: dict = None):
+    def add_result(self, file_path: str, line_number: int, line_content: str, matched_term: str = None, sheet_name: str = None, column_name: str = None, full_row_data: dict = None):
         """Add a search result."""
         result = {
             'file_path': file_path,
             'line_number': line_number,
             'line_content': line_content.strip()
         }
+        if matched_term:
+            result['matched_term'] = matched_term
         if sheet_name:
             result['sheet_name'] = sheet_name
         if column_name:
@@ -45,8 +50,8 @@ class SearchResults:
             return
 
         if output_file is None:
-            safe_term = "".join(c for c in self.search_term if c.isalnum() or c in (' ', '_')).strip()
-            output_file = f"search_results_{safe_term.replace(' ', '_')}.xlsx"
+            safe_terms = "_".join("".join(c for c in term if c.isalnum() or c in (' ', '_')).strip().replace(' ', '_') for term in self.search_terms)
+            output_file = f"search_results_{safe_terms[:50]}.xlsx"
 
         # Prepare data for DataFrame
         export_data = []
@@ -57,6 +62,8 @@ class SearchResults:
                 'line_content': result['line_content']
             }
 
+            if 'matched_term' in result:
+                row_data['matched_term'] = result['matched_term']
             if 'sheet_name' in result:
                 row_data['sheet_name'] = result['sheet_name']
             if 'column_name' in result:
@@ -103,7 +110,7 @@ class SearchResults:
 
             # Add summary sheet
             summary_data = {
-                'Search Term': [self.search_term],
+                'Search Terms': [', '.join(self.search_terms)],
                 'Search Location': [self.search_location],
                 'Total Results': [len(self.results)],
                 'Unique Files': [len(set(r['file_path'] for r in self.results))]
@@ -131,12 +138,12 @@ class SearchResults:
         return output_file
 
 
-def search_excel_file(search_term: str, file_path: Path, results: SearchResults):
+def search_excel_file(search_terms: List[str], file_path: Path, results: SearchResults):
     """
-    Search for a term in an Excel file across all sheets.
+    Search for terms in an Excel file across all sheets.
 
     Args:
-        search_term: The term to search for
+        search_terms: List of terms to search for
         file_path: Path to the Excel file
         results: SearchResults object to add matches to
     """
@@ -144,31 +151,33 @@ def search_excel_file(search_term: str, file_path: Path, results: SearchResults)
         # Read all sheets from the Excel file
         xl = pd.ExcelFile(file_path)
 
-        # Search each sheet for the term
+        # Search each sheet for the terms
         for sheet_name in xl.sheet_names:
             try:
                 df = pd.read_excel(file_path, sheet_name=sheet_name)
 
-                # Convert all columns to string and search for the term
+                # Convert all columns to string and search for the terms
                 for col in df.columns:
                     if df[col].dtype == 'object' or pd.api.types.is_string_dtype(df[col]):
-                        # Search in this column
-                        matches = df[df[col].astype(str).str.contains(search_term, case=False, na=False)]
-                        if not matches.empty:
-                            for idx, row in matches.iterrows():
-                                # Convert entire row to dictionary for full row data
-                                full_row_data = {}
-                                for column in df.columns:
-                                    full_row_data[str(column)] = str(row[column]) if pd.notna(row[column]) else ""
+                        # Search for each term in this column
+                        for search_term in search_terms:
+                            matches = df[df[col].astype(str).str.contains(search_term, case=False, na=False)]
+                            if not matches.empty:
+                                for idx, row in matches.iterrows():
+                                    # Convert entire row to dictionary for full row data
+                                    full_row_data = {}
+                                    for column in df.columns:
+                                        full_row_data[str(column)] = str(row[column]) if pd.notna(row[column]) else ""
 
-                                results.add_result(
-                                    str(file_path.name),
-                                    idx + 2,  # +2 because pandas is 0-indexed and Excel starts at 1, plus header
-                                    str(row[col]),
-                                    sheet_name,
-                                    str(col),
-                                    full_row_data
-                                )
+                                    results.add_result(
+                                        str(file_path.name),
+                                        idx + 2,  # +2 because pandas is 0-indexed and Excel starts at 1, plus header
+                                        str(row[col]),
+                                        search_term,
+                                        sheet_name,
+                                        str(col),
+                                        full_row_data
+                                    )
             except Exception as e:
                 print(f"Warning: Could not read sheet '{sheet_name}' in {file_path}: {e}")
 
@@ -176,12 +185,12 @@ def search_excel_file(search_term: str, file_path: Path, results: SearchResults)
         print(f"Warning: Could not read Excel file {file_path}: {e}")
 
 
-def search_files(search_term: str, search_path: str = ".", file_extensions: List[str] = None) -> SearchResults:
+def search_files(search_terms: List[str], search_path: str = ".", file_extensions: List[str] = None) -> SearchResults:
     """
-    Search for a term in files within the specified path.
+    Search for terms in files within the specified path.
 
     Args:
-        search_term: The term to search for
+        search_terms: List of terms to search for
         search_path: Path to search in (default: current directory)
         file_extensions: List of file extensions to search (default: common text files and Excel)
 
@@ -192,7 +201,7 @@ def search_files(search_term: str, search_path: str = ".", file_extensions: List
         file_extensions = ['.txt', '.py', '.js', '.html', '.css', '.md', '.json', '.xml', '.csv', '.xlsx', '.xls']
 
     results = SearchResults()
-    results.search_term = search_term
+    results.search_terms = search_terms
     results.search_location = os.path.abspath(search_path)
 
     search_path = Path(search_path)
@@ -201,63 +210,44 @@ def search_files(search_term: str, search_path: str = ".", file_extensions: List
         print(f"Error: Path '{search_path}' does not exist.")
         return results
 
-    print(f"Searching for '{search_term}' in {search_path}...")
+    print(f"Searching for {len(search_terms)} term(s) in {search_path}...")
 
     total_files = 0
     matching_files = 0
 
-    # Search through files
+    # Collect all files first for progress bar
     if search_path.is_file():
-        # Handle single file case
-        if search_path.suffix.lower() in file_extensions:
-            total_files = 1
-            initial_results_count = len(results.results)
+        files_to_search = [search_path] if search_path.suffix.lower() in file_extensions else []
+    else:
+        files_to_search = [f for f in search_path.rglob('*') if f.is_file() and f.suffix.lower() in file_extensions]
 
-            if search_path.suffix.lower() in ['.xlsx', '.xls']:
-                # Handle Excel file
-                search_excel_file(search_term, search_path, results)
-            else:
-                # Handle text file
-                try:
-                    with open(search_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        for line_number, line in enumerate(f, 1):
+    total_files = len(files_to_search)
+
+    # Search through files with progress bar
+    for file_path in tqdm(files_to_search, desc="Searching files", unit="file"):
+        initial_results_count = len(results.results)
+
+        if file_path.suffix.lower() in ['.xlsx', '.xls']:
+            # Handle Excel file
+            search_excel_file(search_terms, file_path, results)
+        else:
+            # Handle text file
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line_number, line in enumerate(f, 1):
+                        for search_term in search_terms:
                             if search_term.lower() in line.lower():
                                 results.add_result(
-                                    str(search_path.name),
+                                    str(file_path.name) if search_path.is_file() else str(file_path.relative_to(search_path)),
                                     line_number,
-                                    line
+                                    line,
+                                    search_term
                                 )
-                except Exception as e:
-                    print(f"Warning: Could not read file {search_path}: {e}")
+            except Exception as e:
+                tqdm.write(f"Warning: Could not read file {file_path}: {e}")
 
-            if len(results.results) > initial_results_count:
-                matching_files += 1
-    else:
-        # Handle directory case
-        for file_path in search_path.rglob('*'):
-            if file_path.is_file() and file_path.suffix.lower() in file_extensions:
-                total_files += 1
-                initial_results_count = len(results.results)
-
-                if file_path.suffix.lower() in ['.xlsx', '.xls']:
-                    # Handle Excel file
-                    search_excel_file(search_term, file_path, results)
-                else:
-                    # Handle text file
-                    try:
-                        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                            for line_number, line in enumerate(f, 1):
-                                if search_term.lower() in line.lower():
-                                    results.add_result(
-                                        str(file_path.relative_to(search_path)),
-                                        line_number,
-                                        line
-                                    )
-                    except Exception as e:
-                        print(f"Warning: Could not read file {file_path}: {e}")
-
-                if len(results.results) > initial_results_count:
-                    matching_files += 1
+        if len(results.results) > initial_results_count:
+            matching_files += 1
 
     print(f"Search complete. Found {len(results.results)} matches in {matching_files} files out of {total_files} files searched.")
     return results
@@ -269,12 +259,14 @@ def display_results(results: SearchResults, max_display: int = 20):
         print("No results found.")
         return
 
-    print(f"\nSearch Results for '{results.search_term}':")
+    print(f"\nSearch Results for: {', '.join(repr(t) for t in results.search_terms)}")
     print("=" * 60)
 
     displayed = 0
     for result in results.results[:max_display]:
         print(f"File: {result['file_path']}")
+        if 'matched_term' in result:
+            print(f"Matched term: '{result['matched_term']}'")
         if 'sheet_name' in result and 'column_name' in result:
             print(f"Sheet: {result['sheet_name']}, Row {result['line_number']}, Column: {result['column_name']}")
             print(f"Value: {result['line_content']}")
@@ -297,13 +289,13 @@ def main():
         epilog="""
 Examples:
   python sheetshow.py "function" --path ./src
-  python sheetshow.py "TODO" --file script.py
+  python sheetshow.py "TODO" "FIXME" --file script.py
   python sheetshow.py "factor" --file "Hosting Services IP Networks.xlsx"
-  python sheetshow.py "error" --path /home/user/project --output my_results.xlsx
+  python sheetshow.py "error" "warning" --path /home/user/project --output my_results.xlsx
         """
     )
 
-    parser.add_argument('search_term', help='The text to search for')
+    parser.add_argument('search_terms', nargs='+', help='One or more text terms to search for')
 
     # Create mutually exclusive group for file or path (at least one required)
     target_group = parser.add_mutually_exclusive_group(required=True)
@@ -323,7 +315,7 @@ Examples:
     search_target = args.path if args.path else args.file
 
     # Perform search
-    results = search_files(args.search_term, search_target, args.extensions)
+    results = search_files(args.search_terms, search_target, args.extensions)
 
     # Display results
     display_results(results, args.max_display)
