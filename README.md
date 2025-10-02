@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ### Search in Excel file (with full row context):
 ```bash
-python sheetshow.py "factor" --file "Hosting Services IP Networks.xlsx" --export
+python sheetshow.py "factor" --file "Hosting IP Networks.xlsx" --export
 ```
 
 ### Search in specific directory:
@@ -76,10 +76,10 @@ The Excel output includes:
 
 When searching Excel files, SheetShow provides complete row context:
 ```
-File: Hosting Services IP Networks.xlsx
+File: Hosting IP Networks.xlsx
 Sheet: Main, Row 18, Column: Unnamed: 2
-Found: Factor Hosting
-Full Row: IP=10.50.0.0, Mask=16.0, Description=Factor Hosting
+Found: Factor Environment
+Full Row: IP=10.0.0.0, Mask=16.0, Description=Factor Hosting
 ```
 
 ## GitHub Repository Description
